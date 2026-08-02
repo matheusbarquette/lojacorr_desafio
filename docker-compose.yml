@@ -1,0 +1,94 @@
+# Sobe tudo com um comando:  docker compose up --build
+#
+#   db     - PostgreSQL
+#   redis  - cache da listagem, compartilhado entre web e worker
+#   web    - a API (gunicorn); aplica as migrations ao subir
+#   worker - enriquecimento em background (management command em modo --loop)
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-seguradoras}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # É deste teste que o `depends_on: service_healthy` do web depende: sem
+      # ele o Django subiria antes de o banco aceitar conexões.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-seguradoras}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      # Expõe o banco na máquina para clientes como Beekeeper/DBeaver e para
+      # rodar a suíte fora do container. 5433 e não 5432 para não conflitar com
+      # um PostgreSQL já instalado localmente.
+      - "${POSTGRES_PORT_EXTERNA:-5433}:5432"
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build: .
+    environment: &django_env
+      POSTGRES_DB: ${POSTGRES_DB:-seguradoras}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-true}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-chave-insegura-apenas-para-dev}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
+      CACHE_LISTAGEM_TTL: ${CACHE_LISTAGEM_TTL:-60}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Migra e sobe o servidor. Só o web migra -- dois processos aplicando
+    # migrations ao mesmo tempo podem colidir.
+    #
+    # O `exec` antes do gunicorn faz ele SUBSTITUIR o shell em vez de virar um
+    # processo filho. Sem isso o PID 1 seria o `sh`, e o SIGTERM do
+    # `docker compose down` não chegaria ao gunicorn: o container só morreria no
+    # timeout, depois de 10s.
+    #
+    # Atenção ao recuo: num bloco YAML `>`, linhas MAIS indentadas que a
+    # primeira preservam a quebra de linha em vez de virar espaço. Alinhar as
+    # continuações sob o `sh -c` faria o shell receber quebras de verdade, e o
+    # gunicorn subiria sem os argumentos.
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+      exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 3 --access-logfile -"
+    ports:
+      - "${PORTA_API:-8000}:8000"
+    healthcheck:
+      # urllib em vez de curl: assim a imagem final não precisa instalar nada
+      # além do Python.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    build: .
+    environment: *django_env
+    depends_on:
+      # Espera o web ficar saudável porque é ele quem aplica as migrations: o
+      # worker só pode começar depois que as tabelas existem.
+      web:
+        condition: service_healthy
+    command: ["python", "manage.py", "enriquecer_seguradoras", "--loop", "--intervalo=15"]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -1,0 +1,17 @@
+# Quanto menor o contexto enviado ao daemon, mais rápido o build.
+.git
+.gitignore
+.idea
+.vscode
+
+venv
+.venv
+
+__pycache__
+*.py[cod]
+
+.env
+*.sqlite3
+staticfiles
+
+anotacoes.MD

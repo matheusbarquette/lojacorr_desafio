@@ -48,26 +48,6 @@ para um host inexistente e as chamadas HTTP são interceptadas pelo `respx`. Se
 algum código tentar sair para a rede, o teste quebra em vez de ficar lento e
 instável.
 
-A suíte roda contra **PostgreSQL**, o mesmo banco de produção — não contra
-SQLite. Isso é proposital, veja [Por que só PostgreSQL](#por-que-só-postgresql).
-
-<details>
-<summary>Rodando fora do container</summary>
-
-Com a stack de pé (o Postgres fica exposto em `localhost:5433`):
-
-```bash
-python -m venv venv && venv\Scripts\activate     # Linux/macOS: source venv/bin/activate
-pip install -r requirements-dev.txt
-pytest                    # usa o Postgres do compose
-python manage.py runserver
-```
-
-Os defaults de `POSTGRES_HOST`/`POSTGRES_PORT` já apontam para `localhost:5433`,
-então não é preciso configurar nada — só ter o `docker compose up` rodando.
-
-</details>
-
 ## Acessando o banco
 
 O PostgreSQL fica exposto na máquina, para uso com Beekeeper Studio, DBeaver,
